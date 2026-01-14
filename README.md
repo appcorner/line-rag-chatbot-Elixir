@@ -66,9 +66,6 @@
 2.  **ตั้งค่า Environment**
     สร้างไฟล์ `.env` (หรือแก้ไขใน `docker-compose.yml`):
     ```env
-    OPENAI_API_KEY=sk-...
-    LINE_CHANNEL_SECRET=...
-    LINE_CHANNEL_ACCESS_TOKEN=...
     DATABASE_URL=ecto://postgres:postgres@postgres/line_chatbot
     ```
 
