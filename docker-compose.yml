@@ -1,0 +1,152 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (For Local Development)
+  postgres:
+    image: postgres:15-alpine
+    container_name: line-chatbot-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-line_chatbot}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Only start this in dev mode, or if explicitly requested. 
+    # But in docker-compose, it's easier to just have it running. 
+    # In PROD, we can stop it or ignore it, or use profiles.
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: line-chatbot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RabbitMQ (Message Queue for high-throughput)
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: line-chatbot-rabbitmq
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+      RABBITMQ_DEFAULT_VHOST: /
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Vector Service (C++ HNSW with SIMD)
+  vector_service:
+    build:
+      context: ./vector_service
+      dockerfile: Dockerfile
+    container_name: line-chatbot-vector
+    ports:
+      - "50051:50051"
+      - "50052:50052"
+    networks:
+      - chatbot-network
+    environment:
+      - VECTOR_PORT=50051
+      - VECTOR_HTTP_PORT=50052
+      - VECTOR_DATA_DIR=/data
+    volumes:
+      - vector_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:50052/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Chat Service (Phoenix + LiveView + Channels)
+  chat_service:
+    build:
+      context: ./chat_service
+      dockerfile: Dockerfile
+    container_name: line-chatbot-chat-service
+    ports:
+      - "8888:8888"
+    networks:
+      - chatbot-network
+    environment:
+      - PORT=8888
+      - PHX_HOST=localhost
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE:-supersecretkey64characterslongatleastforsecuritypurposeshere}
+      - REDIS_URL=redis://redis:6379/0
+      - VECTOR_SERVICE_URL=vector_service:50052
+      - DATABASE_URL=${DATABASE_URL}
+      # RabbitMQ for high-throughput message queue
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASS=${RABBITMQ_PASS:-guest}
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      vector_service:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8888/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend (Nginx + React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: line-chatbot-frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - chatbot-network
+    depends_on:
+      - chat_service
+    restart: unless-stopped
+    environment:
+      - VITE_API_URL=http://chat_service:8888
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  vector_data:
+
+networks:
+  chatbot-network:
+    driver: bridge
