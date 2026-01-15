@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database (For Local Development)
   postgres:
@@ -20,9 +18,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # Only start this in dev mode, or if explicitly requested. 
-    # But in docker-compose, it's easier to just have it running. 
-    # In PROD, we can stop it or ignore it, or use profiles.
 
   # Redis
   redis:
@@ -45,8 +40,8 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: line-chatbot-rabbitmq
     ports:
-      - "5672:5672"    # AMQP
-      - "15672:15672"  # Management UI
+      - "5672:5672"
+      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
@@ -102,13 +97,14 @@ services:
       - SECRET_KEY_BASE=${SECRET_KEY_BASE:-supersecretkey64characterslongatleastforsecuritypurposeshere}
       - REDIS_URL=redis://redis:6379/0
       - VECTOR_SERVICE_URL=vector_service:50052
-      - DATABASE_URL=${DATABASE_URL}
-      # RabbitMQ for high-throughput message queue
+      - DATABASE_URL=${DATABASE_URL:-ecto://postgres:postgres@postgres/line_chatbot}
       - RABBITMQ_HOST=rabbitmq
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=${RABBITMQ_USER:-guest}
       - RABBITMQ_PASS=${RABBITMQ_PASS:-guest}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
@@ -121,25 +117,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
-  # Frontend (Nginx + React)
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: line-chatbot-frontend
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./ssl:/etc/nginx/ssl:ro
-    networks:
-      - chatbot-network
-    depends_on:
-      - chat_service
-    restart: unless-stopped
-    environment:
-      - VITE_API_URL=http://chat_service:8888
 
 volumes:
   postgres_data:
